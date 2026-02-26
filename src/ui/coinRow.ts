@@ -93,9 +93,11 @@ function attachPointerDrag(
   onSetCuts: (cutA: number, cutB: number, source: Source) => void,
 ): void {
   handle.addEventListener("pointerdown", (event) => {
-    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    const parent = track.parentElement as HTMLElement;
     const move = (clientX: number) => {
-      const rect = track.getBoundingClientRect();
+      const liveTrack = parent.querySelector<HTMLElement>(".coin-track");
+      const rect = (liveTrack ?? track).getBoundingClientRect();
       const ratio = (clientX - rect.left) / Math.max(1, rect.width);
       const slot = Math.round(ratio * state.n);
       if (which === "a") {
@@ -110,13 +112,13 @@ function attachPointerDrag(
     move(event.clientX);
     const onMove = (pointerMove: PointerEvent) => move(pointerMove.clientX);
     const onUp = () => {
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-      handle.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
-    handle.addEventListener("pointercancel", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   });
 }
 
@@ -154,4 +156,3 @@ function byId<T extends HTMLElement>(root: HTMLElement, id: string): T {
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
-

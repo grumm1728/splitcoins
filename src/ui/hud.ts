@@ -1,9 +1,8 @@
 import { countByFormula } from "../domain/splitMath";
-import type { GameState, Mode } from "../state/gameState";
+import type { GameState } from "../state/gameState";
 
 export type HudCallbacks = {
   onNChange: (n: number) => void;
-  onModeChange: (mode: Mode) => void;
   onReset: () => void;
   onNextN: () => void;
   onHint: () => void;
@@ -21,9 +20,6 @@ export function renderHud(
   const total = state.total;
   const done = found === total && total > 0;
   const formula = countByFormula(state.n, 3);
-  const modeDescription = state.mode === "challenge"
-    ? "Only row dragging or keyboard handle movement discovers new partitions."
-    : "Any interaction source can discover new partitions.";
 
   container.innerHTML = `
     <header class="hero">
@@ -36,16 +32,10 @@ export function renderHud(
         <label>N coins
           <input id="n-input" type="number" min="1" max="60" step="1" value="${state.n}" />
         </label>
-        <label>Mode
-          <div class="mode-pills" role="tablist" aria-label="Play mode">
-            <button class="pill ${state.mode === "challenge" ? "active" : ""}" id="mode-challenge" type="button">Challenge</button>
-            <button class="pill ${state.mode === "explore" ? "active" : ""}" id="mode-explore" type="button">Explore</button>
-          </div>
-        </label>
       </div>
       <div class="hud-meta">
         <p class="summary-line"><strong>Progress:</strong> ${found}/${total} discovered</p>
-        <p class="summary-line"><strong>Formula:</strong> round(N²/12) = ${formula}</p>
+        <p class="summary-line"><strong>Formula:</strong> round(N^2/12) = ${formula}</p>
         <p class="summary-line ${done ? "ok" : ""}"><strong>Status:</strong> ${done ? "All partitions found." : "Keep exploring."}</p>
       </div>
       <div class="hud-actions">
@@ -55,13 +45,11 @@ export function renderHud(
         <button id="copy-btn" type="button">Copy link</button>
         <button id="telemetry-btn" type="button">Export telemetry</button>
       </div>
-      <p class="mode-note">${modeDescription}</p>
+      <p class="mode-note">Hover previews, click commits, drag discovers.</p>
     </section>
   `;
 
   const nInput = byId<HTMLInputElement>(container, "n-input");
-  const modeChallenge = byId<HTMLButtonElement>(container, "mode-challenge");
-  const modeExplore = byId<HTMLButtonElement>(container, "mode-explore");
   const resetBtn = byId<HTMLButtonElement>(container, "reset-btn");
   const nextBtn = byId<HTMLButtonElement>(container, "next-btn");
   const hintBtn = byId<HTMLButtonElement>(container, "hint-btn");
@@ -69,8 +57,6 @@ export function renderHud(
   const telemetryBtn = byId<HTMLButtonElement>(container, "telemetry-btn");
 
   nInput.addEventListener("change", () => callbacks.onNChange(Number(nInput.value)));
-  modeChallenge.addEventListener("click", () => callbacks.onModeChange("challenge"));
-  modeExplore.addEventListener("click", () => callbacks.onModeChange("explore"));
   resetBtn.addEventListener("click", callbacks.onReset);
   nextBtn.addEventListener("click", callbacks.onNextN);
   hintBtn.addEventListener("click", callbacks.onHint);

@@ -1,8 +1,5 @@
-import type { Mode } from "../state/gameState";
-
 type ShareableState = {
   n: number;
-  mode: Mode;
   cutA: number;
   cutB: number;
   discovered: ReadonlySet<string>;
@@ -17,7 +14,6 @@ export function buildShareUrlFromBase(baseUrl: string, state: ShareableState): s
   const url = new URL(baseUrl);
   const params = url.searchParams;
   params.set("n", String(state.n));
-  params.set("mode", state.mode);
   params.set("c1", String(state.cutA));
   params.set("c2", String(state.cutB));
 
@@ -34,7 +30,6 @@ export function buildShareUrlFromBase(baseUrl: string, state: ShareableState): s
 
 export function parseShareState(): Partial<{
   n: number;
-  mode: Mode;
   cutA: number;
   cutB: number;
   discovered: Set<string>;
@@ -44,21 +39,18 @@ export function parseShareState(): Partial<{
 
 export function parseShareStateFromSearch(search: string): Partial<{
   n: number;
-  mode: Mode;
   cutA: number;
   cutB: number;
   discovered: Set<string>;
 }> {
   const params = new URLSearchParams(search);
   const n = Number(params.get("n"));
-  const modeRaw = params.get("mode");
   const cutA = Number(params.get("c1"));
   const cutB = Number(params.get("c2"));
   const discoveredRaw = params.get("d");
 
   const parsed: Partial<{
     n: number;
-    mode: Mode;
     cutA: number;
     cutB: number;
     discovered: Set<string>;
@@ -66,9 +58,6 @@ export function parseShareStateFromSearch(search: string): Partial<{
 
   if (Number.isInteger(n)) {
     parsed.n = n;
-  }
-  if (modeRaw === "explore" || modeRaw === "challenge") {
-    parsed.mode = modeRaw;
   }
   if (Number.isInteger(cutA)) {
     parsed.cutA = cutA;
@@ -102,3 +91,4 @@ function decodeDiscovered(value: string): Set<string> {
     .filter((entry) => /^\d+\+\d+\+\d+$/.test(entry));
   return new Set(entries);
 }
+

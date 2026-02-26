@@ -5,7 +5,6 @@ import {
   createInitialState,
   resetDiscovered,
   setCuts,
-  setMode,
   setN,
   type GameState,
   type Source,
@@ -48,7 +47,7 @@ const partitionTriangle = byId("partition-triangle");
 const liveRegion = byId("live-region");
 
 const parsed = parseShareState();
-let state: GameState = createInitialState(parsed.n ?? 15, parsed.mode ?? "challenge");
+let state: GameState = createInitialState(parsed.n ?? 15);
 if (parsed.cutA !== undefined && parsed.cutB !== undefined) {
   state = setCuts(state, parsed.cutA, parsed.cutB, "row", Date.now()).state;
 }
@@ -58,6 +57,8 @@ if (parsed.discovered) {
     discovered: new Set(parsed.discovered),
   };
 }
+
+let previewCuts: { cutA: number; cutB: number } | null = null;
 
 const telemetry: Telemetry = {
   startedAtMs: Date.now(),
@@ -71,27 +72,28 @@ let hintKey: string | null = null;
 renderAll();
 
 function renderAll(): void {
+  const effectiveCutA = previewCuts?.cutA ?? state.cutA;
+  const effectiveCutB = previewCuts?.cutB ?? state.cutB;
+
   const points = partitionPoints(state.n, state.discovered);
   hintKey = points.find((point) => !point.discovered)?.key ?? null;
-  const currentKey = safeCurrentKey();
+  const currentKey = safeCurrentKey(effectiveCutA, effectiveCutB);
 
   renderHud(hud, state, hintKey, {
     onNChange: (n) => {
+      previewCuts = null;
       state = setN(state, n);
       announce(`Set N to ${state.n}`);
       renderAll();
     },
-    onModeChange: (mode) => {
-      state = setMode(state, mode);
-      announce(`Mode changed to ${mode}.`);
-      renderAll();
-    },
     onReset: () => {
+      previewCuts = null;
       state = resetDiscovered(state);
       announce("Discovered partitions reset.");
       renderAll();
     },
     onNextN: () => {
+      previewCuts = null;
       const next = state.n >= 60 ? 1 : state.n + 1;
       state = setN(state, next);
       announce(`Advanced to N=${state.n}`);
@@ -121,32 +123,77 @@ function renderAll(): void {
     },
   });
 
-  renderCoinRow(coinRow, { n: state.n, cutA: state.cutA, cutB: state.cutB }, {
-    onSetCuts: (cutA, cutB, source) => transitionToCuts(cutA, cutB, source),
-  });
-
-  renderCutGrid(cutGrid, {
-    n: state.n,
-    cutA: state.cutA,
-    cutB: state.cutB,
-    discovered: state.discovered,
-  }, {
-    onSelectCuts: (cutA, cutB, source) => transitionToCuts(cutA, cutB, source),
-  });
-
-  renderPartitionTriangle(partitionTriangle, {
-    points,
-    currentKey,
-    hintKey,
-  }, {
-    onSelectPartition: (key, source) => {
-      const representative = representativeCutForPartition(state.n, key);
-      if (source === "triangle") {
-        telemetry.triangleClickCount += 1;
-      }
-      transitionToCuts(representative.cutA, representative.cutB, source);
+  renderCoinRow(coinRow, { n: state.n, cutA: effectiveCutA, cutB: effectiveCutB }, {
+    onSetCuts: (cutA, cutB, source) => {
+      previewCuts = null;
+      transitionToCuts(cutA, cutB, source);
     },
   });
+
+  renderCutGrid(
+    cutGrid,
+    {
+      n: state.n,
+      cutA: effectiveCutA,
+      cutB: effectiveCutB,
+      discovered: state.discovered,
+    },
+    {
+      onSelectCuts: (cutA, cutB, source) => {
+        previewCuts = null;
+        transitionToCuts(cutA, cutB, source);
+      },
+      onPreviewCuts: (cutA, cutB) => {
+        if (previewCuts?.cutA === cutA && previewCuts.cutB === cutB) {
+          return;
+        }
+        previewCuts = { cutA, cutB };
+        renderAll();
+      },
+      onClearPreview: () => {
+        if (previewCuts !== null) {
+          previewCuts = null;
+          renderAll();
+        }
+      },
+    },
+  );
+
+  renderPartitionTriangle(
+    partitionTriangle,
+    {
+      points,
+      currentKey,
+      hintKey,
+    },
+    {
+      onSelectPartition: (key, source) => {
+        previewCuts = null;
+        const representative = representativeCutForPartition(state.n, key);
+        if (source === "triangle") {
+          telemetry.triangleClickCount += 1;
+        }
+        transitionToCuts(representative.cutA, representative.cutB, source);
+      },
+      onPreviewPartition: (key) => {
+        const representative = representativeCutForPartition(state.n, key);
+        if (
+          previewCuts?.cutA === representative.cutA
+          && previewCuts.cutB === representative.cutB
+        ) {
+          return;
+        }
+        previewCuts = representative;
+        renderAll();
+      },
+      onClearPreview: () => {
+        if (previewCuts !== null) {
+          previewCuts = null;
+          renderAll();
+        }
+      },
+    },
+  );
 }
 
 function transitionToCuts(cutA: number, cutB: number, source: Source): void {
@@ -170,9 +217,9 @@ function transitionToCuts(cutA: number, cutB: number, source: Source): void {
   renderAll();
 }
 
-function safeCurrentKey(): string | null {
+function safeCurrentKey(cutA: number, cutB: number): string | null {
   try {
-    return currentPartitionKeyFromCuts(state.cutA, state.cutB, state.n);
+    return currentPartitionKeyFromCuts(cutA, cutB, state.n);
   } catch {
     return null;
   }

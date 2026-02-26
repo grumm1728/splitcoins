@@ -3,6 +3,8 @@ import type { Source } from "../state/gameState";
 
 type PartitionTriangleCallbacks = {
   onSelectPartition: (key: string, source: Source) => void;
+  onPreviewPartition: (key: string) => void;
+  onClearPreview: () => void;
 };
 
 type PartitionTriangleState = {
@@ -38,7 +40,7 @@ export function renderPartitionTriangle(
   container.innerHTML = `
     <article class="card rung">
       <h2>Rung 2: Partition Triangle</h2>
-      <p>One point per unordered partition (a≤b≤c). Dot size encodes multiplicity 1, 3, or 6.</p>
+      <p>One point per unordered partition (a<=b<=c). Dot size encodes multiplicity 1, 3, or 6.</p>
       <svg class="triangle" viewBox="0 0 400 360" role="img" aria-label="Partition triangle view">
         <polygon points="20,340 380,340 200,28" class="tri-outline"></polygon>
         ${circles}
@@ -56,9 +58,11 @@ export function renderPartitionTriangle(
     circle.addEventListener("mouseenter", () => {
       const key = circle.dataset.key;
       if (key) {
-        callbacks.onSelectPartition(key, "triangle");
+        callbacks.onPreviewPartition(key);
       }
     });
   });
-}
 
+  const triangle = container.querySelector<SVGElement>(".triangle");
+  triangle?.addEventListener("mouseleave", callbacks.onClearPreview);
+}

@@ -6,14 +6,12 @@ import {
   isValidCuts,
 } from "../domain/splitMath";
 
-export type Mode = "explore" | "challenge";
 export type Source = "row" | "grid" | "triangle";
 
 export type GameState = {
   n: number;
   cutA: number;
   cutB: number;
-  mode: Mode;
   discovered: Set<string>;
   total: number;
   lastSource: Source;
@@ -27,25 +25,17 @@ export type DiscoverResult = {
   partitionKey: string | null;
 };
 
-export function createInitialState(n = 15, mode: Mode = "challenge"): GameState {
+export function createInitialState(n = 15): GameState {
   const normalizedN = clampN(n);
   const cuts = defaultCutsForN(normalizedN);
   return {
     n: normalizedN,
     cutA: cuts.cutA,
     cutB: cuts.cutB,
-    mode,
     discovered: new Set<string>(),
     total: normalizedN < 3 ? 0 : countByFormula(normalizedN, 3),
     lastSource: "row",
     completedAtMs: null,
-  };
-}
-
-export function setMode(state: GameState, mode: Mode): GameState {
-  return {
-    ...state,
-    mode,
   };
 }
 
@@ -89,17 +79,16 @@ export function setCuts(
     lastSource: source,
   };
 
-  return attemptDiscover(next, source, nowMs);
+  return attemptDiscover(next, nowMs);
 }
 
-export function attemptDiscover(state: GameState, source: Source, nowMs: number): DiscoverResult {
+export function attemptDiscover(state: GameState, nowMs: number): DiscoverResult {
   if (!isValidCuts(state.cutA, state.cutB, state.n)) {
     return { state, newlyDiscovered: false, completedNow: false, partitionKey: null };
   }
 
-  const allow = state.mode === "explore" || source === "row";
   const key = currentPartitionKeyFromCuts(state.cutA, state.cutB, state.n);
-  if (!allow || state.discovered.has(key)) {
+  if (state.discovered.has(key)) {
     return { state, newlyDiscovered: false, completedNow: false, partitionKey: key };
   }
 
@@ -125,4 +114,3 @@ export function currentKey(state: GameState): string | null {
   }
   return currentPartitionKeyFromCuts(state.cutA, state.cutB, state.n);
 }
-

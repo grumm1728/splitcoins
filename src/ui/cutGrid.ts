@@ -10,6 +10,8 @@ type CutGridState = {
 
 type CutGridCallbacks = {
   onSelectCuts: (cutA: number, cutB: number, source: Source) => void;
+  onPreviewCuts: (cutA: number, cutB: number) => void;
+  onClearPreview: () => void;
 };
 
 export function renderCutGrid(
@@ -60,8 +62,10 @@ export function renderCutGrid(
     button.addEventListener("mouseenter", () => {
       const cutA = Number(button.dataset.cuta);
       const cutB = Number(button.dataset.cutb);
-      callbacks.onSelectCuts(cutA, cutB, "grid");
+      callbacks.onPreviewCuts(cutA, cutB);
     });
   });
-}
 
+  const cutGrid = container.querySelector<HTMLElement>(".cut-grid");
+  cutGrid?.addEventListener("mouseleave", callbacks.onClearPreview);
+}
