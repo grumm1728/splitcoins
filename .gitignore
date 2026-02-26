@@ -1,0 +1,19 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.sw?
+
+# Node/web
+node_modules/
+dist/
+build/
+dist-ssr/
+.env
+*.local
+*.log
+
+# Temporary scaffold dir
+splitcoins-app/
