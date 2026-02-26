@@ -27,3 +27,8 @@ npm run build
 - `src/math/partitions.ts`: partition enumeration + validation
 - `src/math/formulas.ts`: closed-form counting formulas
 - `src/math/partitions.test.ts`: prompt-table and formula checks
+
+## GitHub Actions / Pages
+- CI workflow: `.github/workflows/ci.yml` runs tests and build on PRs/pushes.
+- Pages workflow: `.github/workflows/pages.yml` builds and deploys `dist` to GitHub Pages on pushes to `main`.
+- `vite.config.ts` sets base path to `/splitcoins/` in GitHub Actions so assets load correctly for the project page URL.
