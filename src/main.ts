@@ -1,20 +1,27 @@
 import "./style.css";
+import { partitionPoints } from "./domain/partitionSpace";
+import { currentPartitionKeyFromCuts, representativeCutForPartition } from "./domain/splitMath";
 import {
-  enumeratePartitions,
-  isValidPartition,
-  partitionKey,
-  type Partition,
-} from "./math/partitions";
-import { countByFormula } from "./math/formulas";
-import { buildReferenceTable } from "./math/verify";
+  createInitialState,
+  resetDiscovered,
+  setCuts,
+  setMode,
+  setN,
+  type GameState,
+  type Source,
+} from "./state/gameState";
+import { renderCoinRow } from "./ui/coinRow";
+import { renderCutGrid } from "./ui/cutGrid";
+import { renderHud } from "./ui/hud";
+import { buildShareUrl, parseShareState } from "./ui/shareState";
+import { renderPartitionTriangle } from "./ui/partitionTriangle";
 
-type Mode = "explorer" | "challenge";
-
-type ChallengeLevel = {
-  n: number;
-  k: 2 | 3;
-  expected: Set<string>;
-  submitted: Set<string>;
+type Telemetry = {
+  startedAtMs: number;
+  firstDiscoveryAtMs: number | null;
+  completionAtMs: number | null;
+  discoveriesBySource: Record<Source, number>;
+  triangleClickCount: number;
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -24,303 +31,161 @@ if (!app) {
 
 app.innerHTML = `
   <div class="shell">
-    <header class="hero">
-      <p class="eyebrow">Interactive Math Lab</p>
-      <h1>SplitCoins</h1>
-      <p class="subtitle">Explore and play with unordered partitions of N coins into 1, 2, or 3 piles.</p>
-    </header>
-
-    <section class="mode-switch">
-      <button id="mode-explorer" class="tab active" type="button">Explorer</button>
-      <button id="mode-challenge" class="tab" type="button">Challenge</button>
-    </section>
-
-    <section id="explorer-panel" class="panel">
-      <div class="controls">
-        <label>N
-          <input id="explorer-n" type="number" min="1" max="200" step="1" value="12" />
-        </label>
-        <label>Piles (k)
-          <select id="explorer-k">
-            <option value="1">1 pile</option>
-            <option value="2">2 piles</option>
-            <option value="3" selected>3 piles</option>
-          </select>
-        </label>
-      </div>
-      <div id="explorer-summary" class="summary"></div>
-      <div class="grid">
-        <article class="card">
-          <h2>Partitions</h2>
-          <p id="partition-caption"></p>
-          <ul id="partition-list" class="partition-list"></ul>
-        </article>
-        <article class="card">
-          <h2>Reference Table (N = 1..15)</h2>
-          <p>Must match the prompt values.</p>
-          <div class="table-wrap">
-            <table id="reference-table"></table>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section id="challenge-panel" class="panel hidden">
-      <div class="challenge-head">
-        <div id="level-label" class="summary"></div>
-        <button id="new-level" type="button">New Level</button>
-      </div>
-      <div class="controls">
-        <label>Enter split (example: 1+3+6)
-          <input id="challenge-input" type="text" autocomplete="off" />
-        </label>
-        <button id="add-split" type="button">Add Split</button>
-        <button id="check-level" type="button">Check</button>
-        <button id="reveal-missing" type="button">Reveal Missing</button>
-      </div>
-      <p id="challenge-message" class="message"></p>
-      <article class="card">
-        <h2>Your valid splits</h2>
-        <ul id="submitted-list" class="partition-list"></ul>
-      </article>
-    </section>
+    <section id="hud"></section>
+    <main class="rungs">
+      <section id="coin-row"></section>
+      <section id="cut-grid"></section>
+      <section id="partition-triangle"></section>
+    </main>
+    <p id="live-region" class="sr-only" aria-live="polite"></p>
   </div>
 `;
 
-const modeExplorer = byId<HTMLButtonElement>("mode-explorer");
-const modeChallenge = byId<HTMLButtonElement>("mode-challenge");
-const explorerPanel = byId<HTMLDivElement>("explorer-panel");
-const challengePanel = byId<HTMLDivElement>("challenge-panel");
+const hud = byId("hud");
+const coinRow = byId("coin-row");
+const cutGrid = byId("cut-grid");
+const partitionTriangle = byId("partition-triangle");
+const liveRegion = byId("live-region");
 
-const explorerNInput = byId<HTMLInputElement>("explorer-n");
-const explorerKSelect = byId<HTMLSelectElement>("explorer-k");
-const explorerSummary = byId<HTMLDivElement>("explorer-summary");
-const partitionCaption = byId<HTMLParagraphElement>("partition-caption");
-const partitionList = byId<HTMLUListElement>("partition-list");
-const referenceTable = byId<HTMLTableElement>("reference-table");
-
-const levelLabel = byId<HTMLDivElement>("level-label");
-const challengeInput = byId<HTMLInputElement>("challenge-input");
-const challengeMessage = byId<HTMLParagraphElement>("challenge-message");
-const submittedList = byId<HTMLUListElement>("submitted-list");
-const newLevelButton = byId<HTMLButtonElement>("new-level");
-const addSplitButton = byId<HTMLButtonElement>("add-split");
-const checkLevelButton = byId<HTMLButtonElement>("check-level");
-const revealMissingButton = byId<HTMLButtonElement>("reveal-missing");
-
-let mode: Mode = "explorer";
-let challengeLevel = createChallengeLevel();
-
-modeExplorer.addEventListener("click", () => setMode("explorer"));
-modeChallenge.addEventListener("click", () => setMode("challenge"));
-explorerNInput.addEventListener("input", () => renderExplorer());
-explorerKSelect.addEventListener("change", () => renderExplorer());
-newLevelButton.addEventListener("click", () => {
-  challengeLevel = createChallengeLevel();
-  challengeInput.value = "";
-  challengeMessage.textContent = "New level started.";
-  renderChallenge();
-});
-addSplitButton.addEventListener("click", () => addChallengeSplit());
-checkLevelButton.addEventListener("click", () => checkChallenge());
-revealMissingButton.addEventListener("click", () => revealMissing());
-challengeInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    addChallengeSplit();
-  }
-});
-
-renderReferenceTable();
-renderExplorer();
-renderChallenge();
-setMode("explorer");
-
-function setMode(next: Mode): void {
-  mode = next;
-  const explorer = mode === "explorer";
-  modeExplorer.classList.toggle("active", explorer);
-  modeChallenge.classList.toggle("active", !explorer);
-  explorerPanel.classList.toggle("hidden", !explorer);
-  challengePanel.classList.toggle("hidden", explorer);
+const parsed = parseShareState();
+let state: GameState = createInitialState(parsed.n ?? 15, parsed.mode ?? "challenge");
+if (parsed.cutA !== undefined && parsed.cutB !== undefined) {
+  state = setCuts(state, parsed.cutA, parsed.cutB, "row", Date.now()).state;
+}
+if (parsed.discovered) {
+  state = {
+    ...state,
+    discovered: new Set(parsed.discovered),
+  };
 }
 
-function renderExplorer(): void {
-  const n = normalizeN(explorerNInput.value);
-  const k = normalizeK(explorerKSelect.value);
-  explorerNInput.value = String(n);
-  explorerKSelect.value = String(k);
+const telemetry: Telemetry = {
+  startedAtMs: Date.now(),
+  firstDiscoveryAtMs: null,
+  completionAtMs: null,
+  discoveriesBySource: { row: 0, grid: 0, triangle: 0 },
+  triangleClickCount: 0,
+};
 
-  const partitions = enumeratePartitions(n, k);
-  const enumCount = partitions.length;
-  const formulaCount = countByFormula(n, k);
-  const match = enumCount === formulaCount;
+let hintKey: string | null = null;
+renderAll();
 
-  explorerSummary.innerHTML = `
-    <strong>N = ${n}, k = ${k}</strong><br/>
-    Enumeration: <strong>${enumCount}</strong> | Formula: <strong>${formulaCount}</strong> |
-    <span class="${match ? "ok" : "bad"}">${match ? "MATCH" : "MISMATCH"}</span>
-  `;
+function renderAll(): void {
+  const points = partitionPoints(state.n, state.discovered);
+  hintKey = points.find((point) => !point.discovered)?.key ?? null;
+  const currentKey = safeCurrentKey();
 
-  const limit = 150;
-  const preview = partitions.slice(0, limit).map(formatPartition);
-  partitionCaption.textContent =
-    partitions.length > limit
-      ? `Showing first ${limit} of ${partitions.length} partitions.`
-      : `Showing all ${partitions.length} partitions.`;
-  partitionList.innerHTML = preview.map((text) => `<li>${text}</li>`).join("");
+  renderHud(hud, state, hintKey, {
+    onNChange: (n) => {
+      state = setN(state, n);
+      announce(`Set N to ${state.n}`);
+      renderAll();
+    },
+    onModeChange: (mode) => {
+      state = setMode(state, mode);
+      announce(`Mode changed to ${mode}.`);
+      renderAll();
+    },
+    onReset: () => {
+      state = resetDiscovered(state);
+      announce("Discovered partitions reset.");
+      renderAll();
+    },
+    onNextN: () => {
+      const next = state.n >= 60 ? 1 : state.n + 1;
+      state = setN(state, next);
+      announce(`Advanced to N=${state.n}`);
+      renderAll();
+    },
+    onHint: () => {
+      if (hintKey) {
+        announce(`Hint: try partition ${hintKey}`);
+      }
+    },
+    onCopyLink: async () => {
+      const url = buildShareUrl(state);
+      try {
+        await navigator.clipboard.writeText(url);
+        announce("Share link copied.");
+      } catch {
+        announce("Copy failed. Clipboard permission not available.");
+      }
+    },
+    onExportTelemetry: () => {
+      const snapshot = {
+        ...telemetry,
+        elapsedMs: Date.now() - telemetry.startedAtMs,
+      };
+      localStorage.setItem("splitcoins_telemetry_last", JSON.stringify(snapshot));
+      announce("Telemetry saved to localStorage key splitcoins_telemetry_last.");
+    },
+  });
+
+  renderCoinRow(coinRow, { n: state.n, cutA: state.cutA, cutB: state.cutB }, {
+    onSetCuts: (cutA, cutB, source) => transitionToCuts(cutA, cutB, source),
+  });
+
+  renderCutGrid(cutGrid, {
+    n: state.n,
+    cutA: state.cutA,
+    cutB: state.cutB,
+    discovered: state.discovered,
+  }, {
+    onSelectCuts: (cutA, cutB, source) => transitionToCuts(cutA, cutB, source),
+  });
+
+  renderPartitionTriangle(partitionTriangle, {
+    points,
+    currentKey,
+    hintKey,
+  }, {
+    onSelectPartition: (key, source) => {
+      const representative = representativeCutForPartition(state.n, key);
+      if (source === "triangle") {
+        telemetry.triangleClickCount += 1;
+      }
+      transitionToCuts(representative.cutA, representative.cutB, source);
+    },
+  });
 }
 
-function renderReferenceTable(): void {
-  const rows = buildReferenceTable(15);
-  referenceTable.innerHTML = `
-    <thead>
-      <tr>
-        <th>N</th>
-        <th>1 pile</th>
-        <th>2 piles</th>
-        <th>3 piles</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows
-        .map(
-          (row) => `
-            <tr>
-              <td>${row.n}</td>
-              <td>${row.oneCount}</td>
-              <td>${row.twoCount}</td>
-              <td>${row.threeCount}</td>
-            </tr>`,
-        )
-        .join("")}
-    </tbody>
-  `;
-}
+function transitionToCuts(cutA: number, cutB: number, source: Source): void {
+  const now = Date.now();
+  const result = setCuts(state, cutA, cutB, source, now);
+  state = result.state;
 
-function renderChallenge(): void {
-  const total = challengeLevel.expected.size;
-  const found = challengeLevel.submitted.size;
-  levelLabel.innerHTML = `Find all splits for <strong>N = ${challengeLevel.n}</strong> into <strong>k = ${challengeLevel.k}</strong> piles. Found ${found}/${total}.`;
-  submittedList.innerHTML = [...challengeLevel.submitted]
-    .sort(sortPartitionKeys)
-    .map((key) => `<li>${key.replaceAll("+", " + ")}</li>`)
-    .join("");
-}
-
-function addChallengeSplit(): void {
-  const raw = challengeInput.value.trim();
-  const parse = parseInput(raw);
-  if (!parse.ok) {
-    challengeMessage.textContent = parse.error;
-    return;
-  }
-
-  const parts = parse.parts;
-  if (!isValidPartition(parts, challengeLevel.n, challengeLevel.k)) {
-    challengeMessage.textContent = `Invalid for this level: split must have ${challengeLevel.k} positive parts summing to ${challengeLevel.n}.`;
-    return;
-  }
-
-  const key = partitionKey(parts);
-  if (!challengeLevel.expected.has(key)) {
-    challengeMessage.textContent =
-      "That split is not valid under unordered partition rules.";
-    return;
-  }
-  if (challengeLevel.submitted.has(key)) {
-    challengeMessage.textContent = "Already submitted.";
-    return;
-  }
-
-  challengeLevel.submitted.add(key);
-  challengeInput.value = "";
-  challengeMessage.textContent = "Accepted.";
-  renderChallenge();
-}
-
-function checkChallenge(): void {
-  const total = challengeLevel.expected.size;
-  const found = challengeLevel.submitted.size;
-  if (found === total) {
-    challengeMessage.textContent = "Perfect. You found all valid splits.";
-    return;
-  }
-  challengeMessage.textContent = `Not complete yet: ${total - found} missing.`;
-}
-
-function revealMissing(): void {
-  const missing = [...challengeLevel.expected]
-    .filter((key) => !challengeLevel.submitted.has(key))
-    .sort(sortPartitionKeys);
-
-  if (missing.length === 0) {
-    challengeMessage.textContent = "No missing splits.";
-    return;
-  }
-
-  const preview = missing.slice(0, 6).map((key) => key.replaceAll("+", " + "));
-  challengeMessage.textContent = `Missing (${missing.length}): ${preview.join(", ")}${missing.length > preview.length ? ", ..." : ""}`;
-}
-
-function createChallengeLevel(): ChallengeLevel {
-  const k = Math.random() < 0.5 ? 2 : 3;
-  const n = k === 2 ? randomInt(8, 42) : randomInt(8, 28);
-  const expected = new Set(enumeratePartitions(n, k).map(partitionKey));
-  return { n, k, expected, submitted: new Set<string>() };
-}
-
-function parseInput(raw: string): { ok: true; parts: Partition } | { ok: false; error: string } {
-  const cleaned = raw.replace(/\s+/g, "");
-  if (!/^\d+(\+\d+)*$/.test(cleaned)) {
-    return { ok: false, error: 'Use positive integers joined by "+", for example 1+3+6.' };
-  }
-
-  const parts = cleaned.split("+").map((token) => Number(token));
-  if (parts.some((value) => !Number.isInteger(value) || value < 1)) {
-    return { ok: false, error: "All parts must be positive integers." };
-  }
-  return { ok: true, parts };
-}
-
-function normalizeN(raw: string): number {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    return 1;
-  }
-  return Math.min(200, Math.max(1, Math.round(parsed)));
-}
-
-function normalizeK(raw: string): 1 | 2 | 3 {
-  if (raw === "1" || raw === "2" || raw === "3") {
-    return Number(raw) as 1 | 2 | 3;
-  }
-  return 1;
-}
-
-function byId<T extends HTMLElement>(id: string): T {
-  const node = document.getElementById(id);
-  if (!node) {
-    throw new Error(`Missing element with id "${id}"`);
-  }
-  return node as T;
-}
-
-function formatPartition(parts: Partition): string {
-  return parts.join(" + ");
-}
-
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function sortPartitionKeys(a: string, b: string): number {
-  const aNums = a.split("+").map(Number);
-  const bNums = b.split("+").map(Number);
-  const len = Math.min(aNums.length, bNums.length);
-  for (let i = 0; i < len; i += 1) {
-    if (aNums[i] !== bNums[i]) {
-      return aNums[i] - bNums[i];
+  if (result.newlyDiscovered) {
+    telemetry.discoveriesBySource[source] += 1;
+    if (telemetry.firstDiscoveryAtMs === null) {
+      telemetry.firstDiscoveryAtMs = now;
     }
+    announce(`Discovered partition ${result.partitionKey}.`);
   }
-  return aNums.length - bNums.length;
+
+  if (result.completedNow && telemetry.completionAtMs === null) {
+    telemetry.completionAtMs = now;
+    announce("All partitions discovered.");
+  }
+
+  renderAll();
+}
+
+function safeCurrentKey(): string | null {
+  try {
+    return currentPartitionKeyFromCuts(state.cutA, state.cutB, state.n);
+  } catch {
+    return null;
+  }
+}
+
+function byId(id: string): HTMLElement {
+  const element = document.getElementById(id);
+  if (!element) {
+    throw new Error(`Missing element #${id}`);
+  }
+  return element;
+}
+
+function announce(message: string): void {
+  liveRegion.textContent = message;
 }
