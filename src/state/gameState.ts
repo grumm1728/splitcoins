@@ -25,7 +25,7 @@ export type DiscoverResult = {
   partitionKey: string | null;
 };
 
-export function createInitialState(n = 15): GameState {
+export function createInitialState(n = 10): GameState {
   const normalizedN = clampN(n);
   const cuts = defaultCutsForN(normalizedN);
   return {
@@ -80,6 +80,24 @@ export function setCuts(
   };
 
   return attemptDiscover(next, nowMs);
+}
+
+export function setCurrentCuts(
+  state: GameState,
+  cutA: number,
+  cutB: number,
+  source: Source,
+): GameState {
+  if (!isValidCuts(cutA, cutB, state.n)) {
+    return state;
+  }
+
+  return {
+    ...state,
+    cutA,
+    cutB,
+    lastSource: source,
+  };
 }
 
 export function attemptDiscover(state: GameState, nowMs: number): DiscoverResult {

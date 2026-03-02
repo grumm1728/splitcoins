@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createInitialState, currentKey, setCuts, setN } from "./gameState";
+import { createInitialState, currentKey, setCurrentCuts, setCuts, setN } from "./gameState";
 
 describe("game state discovery rules", () => {
+  it("defaults to n=10", () => {
+    const state = createInitialState();
+    expect(state.n).toBe(10);
+  });
+
   it("counts discovery from grid and row interactions", () => {
     let state = createInitialState(9);
     const afterGrid = setCuts(state, 2, 5, "grid", 1000);
@@ -25,11 +30,10 @@ describe("game state discovery rules", () => {
 
   it("updates current key and resets when n changes", () => {
     let state = createInitialState(9);
-    state = setCuts(state, 2, 5, "row", 1).state;
+    state = setCurrentCuts(state, 2, 5, "row");
     expect(currentKey(state)).toBe("2+3+4");
-    expect(state.discovered.size).toBe(1);
+    expect(state.discovered.size).toBe(0);
     state = setN(state, 15);
     expect(state.discovered.size).toBe(0);
   });
 });
-

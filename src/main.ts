@@ -1,9 +1,16 @@
 import "./style.css";
 import { partitionPoints } from "./domain/partitionSpace";
-import { currentPartitionKeyFromCuts, representativeCutForPartition } from "./domain/splitMath";
 import {
+  currentPartitionKeyFromCuts,
+  isValidCuts,
+  normalizeUnordered,
+  orderedCutsToParts,
+} from "./domain/splitMath";
+import {
+  attemptDiscover,
   createInitialState,
   resetDiscovered,
+  setCurrentCuts,
   setCuts,
   setN,
   type GameState,
@@ -12,15 +19,27 @@ import {
 import { renderCoinRow } from "./ui/coinRow";
 import { renderCutGrid } from "./ui/cutGrid";
 import { renderHud } from "./ui/hud";
-import { buildShareUrl, parseShareState } from "./ui/shareState";
 import { renderPartitionTriangle } from "./ui/partitionTriangle";
+import { createRenderScheduler } from "./ui/renderScheduler";
+import { parseShareState } from "./ui/shareState";
+import {
+  clampToSvgBounds,
+  gridCellId,
+  nearestOrderedLatticePoint,
+  orderedLatticePoints,
+  partsToSvg,
+  submitOrderedSplit,
+  type DragPosition,
+  type SubmittedRow,
+  unorderedKeyFromParts,
+} from "./ui/rungState";
 
 type Telemetry = {
   startedAtMs: number;
   firstDiscoveryAtMs: number | null;
   completionAtMs: number | null;
   discoveriesBySource: Record<Source, number>;
-  triangleClickCount: number;
+  triangleDropCount: number;
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -47,9 +66,9 @@ const partitionTriangle = byId("partition-triangle");
 const liveRegion = byId("live-region");
 
 const parsed = parseShareState();
-let state: GameState = createInitialState(parsed.n ?? 15);
+let state: GameState = createInitialState(10);
 if (parsed.cutA !== undefined && parsed.cutB !== undefined) {
-  state = setCuts(state, parsed.cutA, parsed.cutB, "row", Date.now()).state;
+  state = setCurrentCuts(state, parsed.cutA, parsed.cutB, "row");
 }
 if (parsed.discovered) {
   state = {
@@ -58,163 +77,227 @@ if (parsed.discovered) {
   };
 }
 
-let previewCuts: { cutA: number; cutB: number } | null = null;
+let demoCuts = { cutA: state.cutA, cutB: state.cutB };
+let submittedRows: SubmittedRow[] = [];
+let revealedGridCells = new Set<string>();
+let highlightedPermutationKey: string | null = null;
+let selectedPartitionKey: string | null = safeCurrentKey(demoCuts.cutA, demoCuts.cutB);
+let triangleDragPosition: DragPosition | null = null;
+let isTriangleDragging = false;
+let triangleAnimationFrame: number | null = null;
 
 const telemetry: Telemetry = {
   startedAtMs: Date.now(),
   firstDiscoveryAtMs: null,
   completionAtMs: null,
   discoveriesBySource: { row: 0, grid: 0, triangle: 0 },
-  triangleClickCount: 0,
+  triangleDropCount: 0,
 };
 
-let hintKey: string | null = null;
+const scheduler = createRenderScheduler(renderAll);
 renderAll();
 
 function renderAll(): void {
-  const effectiveCutA = previewCuts?.cutA ?? state.cutA;
-  const effectiveCutB = previewCuts?.cutB ?? state.cutB;
-
   const points = partitionPoints(state.n, state.discovered);
-  hintKey = points.find((point) => !point.discovered)?.key ?? null;
-  const currentKey = safeCurrentKey(effectiveCutA, effectiveCutB);
+  const hintKey = points.find((point) => !point.discovered)?.key ?? null;
 
   renderHud(hud, state, hintKey, {
     onNChange: (n) => {
-      previewCuts = null;
-      state = setN(state, n);
+      resetForN(n);
       announce(`Set N to ${state.n}`);
-      renderAll();
+      scheduler.flush();
     },
     onReset: () => {
-      previewCuts = null;
       state = resetDiscovered(state);
-      announce("Discovered partitions reset.");
-      renderAll();
-    },
-    onNextN: () => {
-      previewCuts = null;
-      const next = state.n >= 60 ? 1 : state.n + 1;
-      state = setN(state, next);
-      announce(`Advanced to N=${state.n}`);
-      renderAll();
-    },
-    onHint: () => {
-      if (hintKey) {
-        announce(`Hint: try partition ${hintKey}`);
-      }
-    },
-    onCopyLink: async () => {
-      const url = buildShareUrl(state);
-      try {
-        await navigator.clipboard.writeText(url);
-        announce("Share link copied.");
-      } catch {
-        announce("Copy failed. Clipboard permission not available.");
-      }
-    },
-    onExportTelemetry: () => {
-      const snapshot = {
-        ...telemetry,
-        elapsedMs: Date.now() - telemetry.startedAtMs,
-      };
-      localStorage.setItem("splitcoins_telemetry_last", JSON.stringify(snapshot));
-      announce("Telemetry saved to localStorage key splitcoins_telemetry_last.");
+      announce("Discovered progress reset.");
+      scheduler.flush();
     },
   });
 
-  renderCoinRow(coinRow, { n: state.n, cutA: effectiveCutA, cutB: effectiveCutB }, {
-    onSetCuts: (cutA, cutB, source) => {
-      previewCuts = null;
-      transitionToCuts(cutA, cutB, source);
+  renderCoinRow(coinRow, {
+    n: state.n,
+    cutA: demoCuts.cutA,
+    cutB: demoCuts.cutB,
+    submittedRows,
+    canSubmit: isValidCuts(demoCuts.cutA, demoCuts.cutB, state.n),
+  }, {
+    onChangeCuts: (cutA, cutB, source) => {
+      setDemoCuts(cutA, cutB, source, false);
+    },
+    onSubmit: submitCurrentDemoFromRung0,
+    onResetSubmissions: () => {
+      submittedRows = [];
+      announce("Rung 0 submissions cleared.");
+      scheduler.schedule();
     },
   });
 
-  renderCutGrid(
-    cutGrid,
-    {
-      n: state.n,
-      cutA: effectiveCutA,
-      cutB: effectiveCutB,
-      discovered: state.discovered,
+  renderCutGrid(cutGrid, {
+    n: state.n,
+    demoCutA: demoCuts.cutA,
+    demoCutB: demoCuts.cutB,
+    revealedCells: revealedGridCells,
+    highlightedPermutationKey,
+  }, {
+    onSelectCuts: (cutA, cutB) => {
+      revealGridCell(cutA, cutB);
     },
-    {
-      onSelectCuts: (cutA, cutB, source) => {
-        previewCuts = null;
-        transitionToCuts(cutA, cutB, source);
-      },
-      onPreviewCuts: (cutA, cutB) => {
-        if (previewCuts?.cutA === cutA && previewCuts.cutB === cutB) {
-          return;
-        }
-        previewCuts = { cutA, cutB };
-        renderAll();
-      },
-      onClearPreview: () => {
-        if (previewCuts !== null) {
-          previewCuts = null;
-          renderAll();
-        }
-      },
+    onHighlightPermutation: (unorderedKey) => {
+      if (highlightedPermutationKey === unorderedKey) {
+        return;
+      }
+      highlightedPermutationKey = unorderedKey;
+      scheduler.schedule();
     },
-  );
+    onClearPermutationHighlight: () => {
+      if (highlightedPermutationKey === null) {
+        return;
+      }
+      highlightedPermutationKey = null;
+      scheduler.schedule();
+    },
+  });
 
-  renderPartitionTriangle(
-    partitionTriangle,
-    {
-      points,
-      currentKey,
-      hintKey,
+  renderPartitionTriangle(partitionTriangle, {
+    n: state.n,
+    points,
+    selectedKey: selectedPartitionKey,
+    dragPosition: triangleDragPosition,
+    isDragging: isTriangleDragging,
+  }, {
+    onDragMove: (position) => {
+      cancelTriangleAnimation();
+      isTriangleDragging = true;
+      triangleDragPosition = clampToSvgBounds(position);
+      scheduler.schedule();
     },
-    {
-      onSelectPartition: (key, source) => {
-        previewCuts = null;
-        const representative = representativeCutForPartition(state.n, key);
-        if (source === "triangle") {
-          telemetry.triangleClickCount += 1;
-        }
-        transitionToCuts(representative.cutA, representative.cutB, source);
-      },
-      onPreviewPartition: (key) => {
-        const representative = representativeCutForPartition(state.n, key);
-        if (
-          previewCuts?.cutA === representative.cutA
-          && previewCuts.cutB === representative.cutB
-        ) {
-          return;
-        }
-        previewCuts = representative;
-        renderAll();
-      },
-      onClearPreview: () => {
-        if (previewCuts !== null) {
-          previewCuts = null;
-          renderAll();
-        }
-      },
+    onDragEnd: (position) => {
+      completeTriangleDrop(position);
     },
-  );
+  });
 }
 
-function transitionToCuts(cutA: number, cutB: number, source: Source): void {
+function setDemoCuts(
+  cutA: number,
+  cutB: number,
+  source: Source,
+  discover: boolean,
+  options: { preserveTrianglePosition?: boolean } = {},
+): void {
+  if (!isValidCuts(cutA, cutB, state.n)) {
+    return;
+  }
+
+  demoCuts = { cutA, cutB };
+  selectedPartitionKey = safeCurrentKey(cutA, cutB);
+  if (!options.preserveTrianglePosition) {
+    triangleDragPosition = null;
+  }
+  isTriangleDragging = false;
+
+  if (!discover) {
+    state = setCurrentCuts(state, cutA, cutB, source);
+    scheduler.schedule();
+    return;
+  }
+
   const now = Date.now();
   const result = setCuts(state, cutA, cutB, source, now);
   state = result.state;
+  const discoveryMessage = applyDiscoverResult(result, source, now);
+  if (discoveryMessage) {
+    announce(discoveryMessage);
+  }
+  scheduler.schedule();
+}
 
+function submitCurrentDemoFromRung0(): void {
+  if (!isValidCuts(demoCuts.cutA, demoCuts.cutB, state.n)) {
+    return;
+  }
+
+  const now = Date.now();
+  const parts = orderedCutsToParts(demoCuts.cutA, demoCuts.cutB, state.n);
+  const unorderedKey = unorderedKeyFromParts(parts);
+  const hadRow = submittedRows.some((row) => row.unorderedKey === unorderedKey);
+  submittedRows = submitOrderedSplit(submittedRows, parts, now);
+
+  const result = attemptDiscover(state, now);
+  state = result.state;
+  const discoveryMessage = applyDiscoverResult(result, "row", now);
+  const fallbackMessage = hadRow
+    ? `Logged reordered duplicate ${parts.join(" | ")}.`
+    : `Logged ${parts.join(" | ")}.`;
+  announce(discoveryMessage ?? fallbackMessage);
+  scheduler.schedule();
+}
+
+function revealGridCell(cutA: number, cutB: number): void {
+  revealedGridCells = new Set(revealedGridCells);
+  revealedGridCells.add(gridCellId(cutA, cutB));
+  setDemoCuts(cutA, cutB, "grid", true);
+}
+
+function completeTriangleDrop(position: DragPosition): void {
+  const clamped = clampToSvgBounds(position);
+  const target = nearestOrderedLatticePoint(orderedLatticePoints(state.n), clamped, 18);
+
+  isTriangleDragging = false;
+
+  if (!target) {
+    triangleDragPosition = null;
+    scheduler.schedule();
+    return;
+  }
+
+  telemetry.triangleDropCount += 1;
+  const sortedParts = normalizeUnordered(target.parts);
+  const sortedKey = sortedParts.join("+");
+  const cutA = sortedParts[0];
+  const cutB = sortedParts[0] + sortedParts[1];
+  triangleDragPosition = { x: target.x, y: target.y };
+  selectedPartitionKey = sortedKey;
+  setDemoCuts(cutA, cutB, "triangle", true, { preserveTrianglePosition: true });
+  animateTriangleMarkerTo(partsToSvg(sortedParts, state.n));
+}
+
+function resetForN(n: number): void {
+  state = setN(state, n);
+  demoCuts = { cutA: state.cutA, cutB: state.cutB };
+  submittedRows = [];
+  revealedGridCells = new Set();
+  highlightedPermutationKey = null;
+  selectedPartitionKey = safeCurrentKey(state.cutA, state.cutB);
+  triangleDragPosition = null;
+  isTriangleDragging = false;
+  cancelTriangleAnimation();
+}
+
+function applyDiscoverResult(
+  result: ReturnType<typeof setCuts> | ReturnType<typeof attemptDiscover>,
+  source: Source,
+  now: number,
+): string | null {
   if (result.newlyDiscovered) {
     telemetry.discoveriesBySource[source] += 1;
     if (telemetry.firstDiscoveryAtMs === null) {
       telemetry.firstDiscoveryAtMs = now;
     }
-    announce(`Discovered partition ${result.partitionKey}.`);
   }
 
   if (result.completedNow && telemetry.completionAtMs === null) {
     telemetry.completionAtMs = now;
-    announce("All partitions discovered.");
   }
 
-  renderAll();
+  if (result.completedNow && result.partitionKey) {
+    return `Discovered partition ${result.partitionKey}. All partitions found.`;
+  }
+
+  if (result.newlyDiscovered && result.partitionKey) {
+    return `Discovered partition ${result.partitionKey}.`;
+  }
+
+  return null;
 }
 
 function safeCurrentKey(cutA: number, cutB: number): string | null {
@@ -235,4 +318,45 @@ function byId(id: string): HTMLElement {
 
 function announce(message: string): void {
   liveRegion.textContent = message;
+}
+
+function animateTriangleMarkerTo(target: DragPosition): void {
+  cancelTriangleAnimation();
+  const start = triangleDragPosition;
+  if (!start) {
+    scheduler.schedule();
+    return;
+  }
+
+  const startTime = performance.now();
+  const durationMs = 260;
+
+  const tick = (now: number) => {
+    const elapsed = now - startTime;
+    const progress = Math.min(1, elapsed / durationMs);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    triangleDragPosition = {
+      x: start.x + ((target.x - start.x) * eased),
+      y: start.y + ((target.y - start.y) * eased),
+    };
+    scheduler.schedule();
+
+    if (progress >= 1) {
+      triangleDragPosition = null;
+      triangleAnimationFrame = null;
+      scheduler.schedule();
+      return;
+    }
+
+    triangleAnimationFrame = window.requestAnimationFrame(tick);
+  };
+
+  triangleAnimationFrame = window.requestAnimationFrame(tick);
+}
+
+function cancelTriangleAnimation(): void {
+  if (triangleAnimationFrame !== null) {
+    window.cancelAnimationFrame(triangleAnimationFrame);
+    triangleAnimationFrame = null;
+  }
 }
