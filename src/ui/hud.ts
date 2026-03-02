@@ -19,6 +19,9 @@ export function renderHud(
 
   container.innerHTML = `
     <header class="hero">
+      <p class="source-note">
+        Inspired by <a href="https://x.com/jamestanton/status/2025854643511722359" target="_blank" rel="noreferrer">this problem prompt</a> from James Tanton.
+      </p>
       <div class="hero-head">
         <div class="hero-mark" aria-hidden="true">
           <svg viewBox="0 0 120 120" role="presentation">
